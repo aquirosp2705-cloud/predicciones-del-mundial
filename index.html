@@ -18,7 +18,7 @@ input,select,textarea{border:1px solid #d1d5db;border-radius:10px;padding:8px;ba
 .small{font-size:12px;color:var(--muted)} .pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:700}
 .tablewrap{overflow:auto;border:1px solid var(--line);border-radius:12px}
 table{width:100%;border-collapse:collapse;font-size:13px;background:white} th,td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;white-space:nowrap} th{background:#f3f4f6;position:sticky;top:0;z-index:1} td.num,th.num{text-align:right} tr:hover{background:#f9fafb}
-.rank1{background:#fef3c7} .live{background:var(--warn)} .done{background:var(--good)}
+.rank1{background:#fef3c7} .live{background:var(--warn)} .done{background:var(--good)} .qualified{background:#dcfce7}.thirdok{background:#e0f2fe}.thirdout{background:#fee2e2}.placeholder{color:#6b7280;font-style:italic}
 .score{width:62px;text-align:center} .country{font-weight:700} .tabs button{background:#e5e7eb;color:#111827} .tabs button.active{background:#2563eb;color:white}
 @media(max-width:700px){h1{font-size:18px} main{padding:8px} table{font-size:12px} th,td{padding:6px} .score{width:50px}}
 </style>
@@ -55,6 +55,19 @@ table{width:100%;border-collapse:collapse;font-size:13px;background:white} th,td
    <input id="buscarPais" placeholder="Buscar país..." oninput="renderRanking()">
   </div>
   <div class="tablewrap"><table id="rankingTable"></table></div>
+ </section>
+
+ <section class="card">
+  <div class="row" style="justify-content:space-between">
+    <div><b>Clasificación y cruces proyectados</b> <span class="pill">se recalcula con cada marcador</span></div>
+    <button class="light" onclick="renderProyeccion()">Actualizar proyección</button>
+  </div>
+  <p class="small">La proyección usa los resultados ingresados: primeros y segundos de cada grupo clasifican directo, y además muestra los mejores terceros actuales. Para cruces futuros usa ganadores cuando ya existe marcador; si no, deja el texto “Ganador M…”. En la columna Partido se muestra el código oficial, ejemplo M73.</p>
+  <div id="clasificadosBox"></div>
+  <h3>Tabla de posibles terceros</h3>
+  <div class="tablewrap"><table id="thirdsTable"></table></div>
+  <h3>Posibles partidos de la siguiente etapa / llaves</h3>
+  <div class="tablewrap"><table id="projectedTable"></table></div>
  </section>
 
  <section class="card">
@@ -141,7 +154,7 @@ function renderGroups(){
   out+='</tbody></table></div>';
  }); document.getElementById('groupsBox').innerHTML=out;
 }
-function renderAll(){renderStageFilter();renderRanking();renderMatches();renderGroups();renderResumenCarga();}
+function renderAll(){renderStageFilter();renderRanking();renderMatches();renderGroups();renderResumenCarga();renderProyeccion();}
 function guardarLocal(show=true){localStorage.setItem(STORAGE_KEY,JSON.stringify(matches)); if(show) statusMsg('Guardado en este dispositivo.');}
 function limpiarLocal(){if(confirm('¿Borrar respaldo local y volver a la base inicial con resultados?')){localStorage.removeItem(STORAGE_KEY);matches=JSON.parse(JSON.stringify(INITIAL_DATA.matches));renderAll();statusMsg('Se volvió a la base inicial con resultados cargados.');}}
 function cargarBaseInicial(){localStorage.removeItem(STORAGE_KEY);matches=JSON.parse(JSON.stringify(INITIAL_DATA.matches));renderAll();statusMsg('Base con resultados cargada nuevamente.');}
@@ -149,6 +162,98 @@ function descargarRespaldo(){const blob=new Blob([JSON.stringify({matches},null,
 function cargarArchivo(ev){const f=ev.target.files[0]; if(!f)return; const r=new FileReader(); r.onload=()=>{try{const j=JSON.parse(r.result); matches=normalizarLista(j); guardarLocal(false); renderAll(); statusMsg('Respaldo restaurado correctamente.')}catch(e){statusMsg('No pude leer ese JSON: '+e.message,true)}}; r.readAsText(f);}
 function importarPegado(){try{const j=JSON.parse(document.getElementById('pasteJson').value); matches=mergeMatches(matches, normalizarLista(j)); guardarLocal(false); renderAll(); statusMsg('JSON importado y acumulados recalculados.')}catch(e){statusMsg('JSON pegado inválido: '+e.message,true)}}
 function statusMsg(t,err=false){const el=document.getElementById('status'); el.textContent=t; el.style.color=err?'#dc2626':'#6b7280';}
+
+
+function groupStandings(){
+ const all=calcStats(true), groups={};
+ all.forEach(r=>{ if(!groups[r.group]) groups[r.group]=[]; groups[r.group].push(r); });
+ Object.keys(groups).forEach(g=>groups[g].sort((a,b)=> b.Pts-a.Pts || b.DG-a.DG || b.GF-a.GF || a.team.localeCompare(b.team)));
+ return groups;
+}
+function isGroupComplete(g){
+ const games=matches.filter(m=>m.stage==='GRUPOS' && m.group===g);
+ return games.length>0 && games.every(hasScore);
+}
+function getClasificadosActuales(){
+ const groups=groupStandings();
+ let directos=[], terceros=[];
+ Object.keys(groups).sort().forEach(g=>{
+  const arr=groups[g];
+  if(arr[0]) directos.push({...arr[0],posGrupo:1,grupoCompleto:isGroupComplete(g)});
+  if(arr[1]) directos.push({...arr[1],posGrupo:2,grupoCompleto:isGroupComplete(g)});
+  if(arr[2]) terceros.push({...arr[2],posGrupo:3,grupoCompleto:isGroupComplete(g)});
+ });
+ terceros.sort((a,b)=> b.Pts-a.Pts || b.DG-a.DG || b.GF-a.GF || a.team.localeCompare(b.team));
+ return {directos,terceros,mejoresTerceros:terceros.slice(0,8),groups};
+}
+function renderClasificados(data){
+ let h='<h3>Clasificados actuales por grupo</h3><div class="tablewrap"><table><thead><tr><th>Grupo</th><th>1.º actual</th><th>Pts</th><th>2.º actual</th><th>Pts</th><th>Estado grupo</th></tr></thead><tbody>';
+ Object.keys(data.groups).sort().forEach(g=>{
+  const a=data.groups[g][0], b=data.groups[g][1];
+  h+=`<tr><td><b>${g}</b></td><td class="country">${a?a.team:''}</td><td class="num">${a?a.Pts:''}</td><td class="country">${b?b.team:''}</td><td class="num">${b?b.Pts:''}</td><td>${isGroupComplete(g)?'Completo':'En juego / parcial'}</td></tr>`;
+ });
+ h+='</tbody></table></div>';
+ document.getElementById('clasificadosBox').innerHTML=h;
+}
+function renderThirds(data){
+ let h='<thead><tr><th>Pos</th><th>Grupo</th><th>País</th><th class="num">PJ</th><th class="num">GF</th><th class="num">GC</th><th class="num">DG</th><th class="num">Pts</th><th>Estado</th></tr></thead><tbody>';
+ data.terceros.forEach((r,i)=>{
+  const ok=i<8;
+  h+=`<tr class="${ok?'thirdok':'thirdout'}"><td>${i+1}</td><td>${r.group}</td><td class="country">${r.team}</td><td class="num">${r.PJ}</td><td class="num">${r.GF}</td><td class="num">${r.GC}</td><td class="num">${r.DG}</td><td class="num"><b>${r.Pts}</b></td><td>${ok?'Clasifica como mejor tercero':'Fuera por ahora'}</td></tr>`;
+ });
+ document.getElementById('thirdsTable').innerHTML=h+'</tbody>';
+}
+function ganadorTexto(m){
+ if(!m) return '';
+ if(hasScore(m)){
+  const hs=Number(m.homeScore), as=Number(m.awayScore);
+  if(hs>as) return cleanTeam(m.home);
+  if(as>hs) return cleanTeam(m.away);
+  return 'Ganador por penales M'+(m.number||'');
+ }
+ return 'Ganador M'+(m.number||'');
+}
+function proyectarR32(data){
+ // Proyección simple: 24 directos + 8 mejores terceros, ordenados por rendimiento. No reemplaza el calendario oficial.
+ const equipos=[...data.directos,...data.mejoresTerceros].sort((a,b)=> b.Pts-a.Pts || b.DG-a.DG || b.GF-a.GF || a.team.localeCompare(b.team));
+ const out=[];
+ for(let i=0;i<16;i++){
+  const h=equipos[i], a=equipos[31-i];
+  out.push({etapa:'Dieciseisavos proyectados',partido:'M'+(73+i),home:h?h.team:'Pendiente',away:a?a.team:'Pendiente',ref:'Por ranking actual de clasificados'});
+ }
+ return out;
+}
+function proyectarPorLlave(stage, nextStageName, firstMatch, count){
+ const prev=matches.filter(m=>m.stage===stage).sort((a,b)=>(a.number||0)-(b.number||0));
+ const out=[];
+ for(let i=0;i<count;i++){
+  const m1=prev[i*2], m2=prev[i*2+1];
+  out.push({etapa:nextStageName,partido:'M'+(firstMatch+i),home:ganadorTexto(m1),away:ganadorTexto(m2),ref:`Ganadores de M${m1?m1.number:''} y M${m2?m2.number:''}`});
+ }
+ return out;
+}
+function renderProjected(data){
+ let rows=[];
+ const anyR32=matches.some(m=>m.stage==='R32' && cleanTeam(m.home) && cleanTeam(m.away));
+ const r32Complete=matches.filter(m=>m.stage==='R32').length && matches.filter(m=>m.stage==='R32').every(hasScore);
+ const r16Complete=matches.filter(m=>m.stage==='R16').length && matches.filter(m=>m.stage==='R16').every(hasScore);
+ const qfComplete=matches.filter(m=>m.stage==='QF').length && matches.filter(m=>m.stage==='QF').every(hasScore);
+ const sfComplete=matches.filter(m=>m.stage==='SF').length && matches.filter(m=>m.stage==='SF').every(hasScore);
+ rows = rows.concat(proyectarR32(data));
+ rows = rows.concat(proyectarPorLlave('R32','Octavos proyectados',89,8));
+ rows = rows.concat(proyectarPorLlave('R16','Cuartos proyectados',97,4));
+ rows = rows.concat(proyectarPorLlave('QF','Semifinal proyectada',101,2));
+ rows = rows.concat(proyectarPorLlave('SF','Final / tercer puesto proyectado',103,2));
+ let h='<thead><tr><th>Etapa</th><th>Partido</th><th>Equipo 1</th><th>Equipo 2</th><th>Referencia</th></tr></thead><tbody>';
+ rows.forEach(r=>{
+  h+=`<tr><td>${r.etapa}</td><td>${r.partido}</td><td class="country ${r.home&&r.home.startsWith('Ganador')?'placeholder':''}">${r.home||''}</td><td class="country ${r.away&&r.away.startsWith('Ganador')?'placeholder':''}">${r.away||''}</td><td class="small">${r.ref}</td></tr>`;
+ });
+ document.getElementById('projectedTable').innerHTML=h+'</tbody>';
+}
+function renderProyeccion(){
+ const data=getClasificadosActuales();
+ renderClasificados(data); renderThirds(data); renderProjected(data);
+}
 
 function renderResumenCarga(){
  const jugados=matches.filter(hasScore).length;
