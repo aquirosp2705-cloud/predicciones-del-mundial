@@ -51,6 +51,38 @@ table{width:100%;border-collapse:collapse;font-size:13px;background:white} th,td
 
  <section class="card">
   <div class="row" style="justify-content:space-between">
+    <div><b>Clasificados actuales por grupo</b> <span class="pill">se recalcula con cada marcador</span></div>
+    <button class="light" onclick="renderProyeccion()">Actualizar proyección</button>
+  </div>
+  <p class="small">Primeros y segundos actuales por grupo, tomando en cuenta los marcadores cargados o consultados desde la web.</p>
+  <div id="clasificadosBox"></div>
+ </section>
+
+ <section class="card">
+  <div class="row" style="justify-content:space-between"><b>Partidos de ayer con resultados</b><span class="small" id="ayerLabel"></span></div>
+  <div class="tablewrap"><table id="yesterdayTable"></table></div>
+ </section>
+
+ <section class="card">
+  <div class="row" style="justify-content:space-between"><b>Partidos de hoy con resultados</b><span class="small" id="hoyLabel">se actualiza con la web</span></div>
+  <div class="tablewrap"><table id="todayTable"></table></div>
+ </section>
+
+ <section class="card">
+  <div class="row" style="justify-content:space-between"><b>Tabla de posibles terceros</b><span class="small">mejores terceros actuales</span></div>
+  <div class="tablewrap"><table id="thirdsTable"></table></div>
+ </section>
+
+ <section class="card">
+  <div class="row" style="justify-content:space-between">
+    <div><b>Partidos / Marcadores</b> <span class="pill">se actualiza con la web</span></div>
+    <div class="row"><select id="stageFilter" onchange="renderMatches()"></select><input id="matchSearch" placeholder="Buscar partido o país" oninput="renderMatches()"></div>
+  </div>
+  <div class="tablewrap"><table id="matchesTable"></table></div>
+ </section>
+
+ <section class="card">
+  <div class="row" style="justify-content:space-between">
    <div><b>Tabla compacta acumulada</b> <span class="pill" id="countTeams"></span></div>
    <input id="buscarPais" placeholder="Buscar país..." oninput="renderRanking()">
   </div>
@@ -59,23 +91,11 @@ table{width:100%;border-collapse:collapse;font-size:13px;background:white} th,td
 
  <section class="card">
   <div class="row" style="justify-content:space-between">
-    <div><b>Clasificación y cruces proyectados</b> <span class="pill">se recalcula con cada marcador</span></div>
+    <div><b>Proyección de posibles partidos de la siguiente etapa / llaves</b> <span class="pill">con puntos acumulados</span></div>
     <button class="light" onclick="renderProyeccion()">Actualizar proyección</button>
   </div>
-  <p class="small">La proyección usa los resultados ingresados: primeros y segundos de cada grupo clasifican directo, y además muestra los mejores terceros actuales. Para cruces futuros usa ganadores cuando ya existe marcador; si no, deja el texto “Ganador M…”. En la columna Partido se muestra el código oficial, ejemplo M73.</p>
-  <div id="clasificadosBox"></div>
-  <h3>Tabla de posibles terceros</h3>
-  <div class="tablewrap"><table id="thirdsTable"></table></div>
-  <h3>Posibles partidos de la siguiente etapa / llaves</h3>
+  <p class="small">Para cada país se muestra el puntaje acumulado entre paréntesis, ejemplo México (6). Los puntos se siguen acumulando si el país pasa a siguientes fases.</p>
   <div class="tablewrap"><table id="projectedTable"></table></div>
- </section>
-
- <section class="card">
-  <div class="row" style="justify-content:space-between">
-    <div><b>Partidos / Marcadores</b></div>
-    <div class="row"><select id="stageFilter" onchange="renderMatches()"></select><input id="matchSearch" placeholder="Buscar partido o país" oninput="renderMatches()"></div>
-  </div>
-  <div class="tablewrap"><table id="matchesTable"></table></div>
  </section>
 
  <section class="card">
@@ -144,7 +164,7 @@ function renderMatches(){
 }
 function setScore(id,field,val){
  const m=matches.find(x=>x.id===id); if(!m) return;
- m[field]=val===''?null:Number(val); guardarLocal(false); renderRanking(); renderGroups();
+ m[field]=val===''?null:Number(val); guardarLocal(false); renderRanking(); renderGroups(); renderDailyMatches(); renderProyeccion();
 }
 function renderGroups(){
  const all=calcStats(true); const groups={}; all.forEach(r=>{if(!groups[r.group])groups[r.group]=[]; groups[r.group].push(r);});
@@ -154,7 +174,50 @@ function renderGroups(){
   out+='</tbody></table></div>';
  }); document.getElementById('groupsBox').innerHTML=out;
 }
-function renderAll(){actualizarPartidosProyectados();renderStageFilter();renderRanking();renderMatches();renderGroups();renderResumenCarga();renderProyeccion();}
+
+function todayEcuadorISO(){
+ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Guayaquil',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+}
+function addDaysISO(iso,n){
+ const d=new Date(iso+'T12:00:00Z');
+ d.setUTCDate(d.getUTCDate()+n);
+ return d.toISOString().slice(0,10);
+}
+function renderOneDayTable(tableId, iso){
+ const rows=matches.filter(m=>m.date===iso).sort((a,b)=>(a.timeEcuador||'').localeCompare(b.timeEcuador||'') || (a.number||0)-(b.number||0));
+ let h='<thead><tr><th>#</th><th>Hora</th><th>Etapa</th><th>Grupo</th><th>Local</th><th class="num">GL</th><th class="num">GV</th><th>Visitante</th><th>Estado</th></tr></thead><tbody>';
+ if(!rows.length){
+  h+=`<tr><td colspan="9" class="small">No hay partidos registrados para ${fechaDisplay(iso)}.</td></tr>`;
+ }else{
+  rows.forEach(m=>{
+   const score=hasScore(m);
+   h+=`<tr class="${score?'done':'live'}"><td>${m.number||''}</td><td>${m.timeEcuador||''}</td><td>${m.stageName||STAGE_LABELS[m.stage]||m.stage||''}</td><td>${m.group||''}</td><td class="country">${m.home||''}</td><td class="num"><b>${score?m.homeScore:''}</b></td><td class="num"><b>${score?m.awayScore:''}</b></td><td class="country">${m.away||''}</td><td>${score?'Con marcador':(m.estadoWeb||'Pendiente / en juego')}</td></tr>`;
+  });
+ }
+ document.getElementById(tableId).innerHTML=h+'</tbody>';
+}
+function renderDailyMatches(){
+ const hoy=todayEcuadorISO();
+ const ayer=addDaysISO(hoy,-1);
+ const hoyLabel=document.getElementById('hoyLabel');
+ const ayerLabel=document.getElementById('ayerLabel');
+ if(hoyLabel) hoyLabel.textContent=fechaDisplay(hoy)+' · se actualiza con la web';
+ if(ayerLabel) ayerLabel.textContent=fechaDisplay(ayer);
+ renderOneDayTable('yesterdayTable',ayer);
+ renderOneDayTable('todayTable',hoy);
+}
+function puntosEquipo(nombre){
+ const team=cleanTeam(nombre);
+ if(!team || team.startsWith('Ganador') || team.startsWith('Perdedor') || team==='Pendiente') return null;
+ const row=calcStats(false).find(r=>r.team===team);
+ return row?row.Pts:0;
+}
+function equipoConPuntos(nombre){
+ const pts=puntosEquipo(nombre);
+ return pts===null ? nombre : `${nombre} (${pts})`;
+}
+
+function renderAll(){actualizarPartidosProyectados();renderStageFilter();renderRanking();renderMatches();renderGroups();renderResumenCarga();renderDailyMatches();renderProyeccion();}
 function guardarLocal(show=true){localStorage.setItem(STORAGE_KEY,JSON.stringify(matches)); if(show) statusMsg('Guardado en este dispositivo.');}
 function limpiarLocal(){if(confirm('¿Borrar respaldo local y volver a la base inicial con resultados?')){localStorage.removeItem(STORAGE_KEY);matches=JSON.parse(JSON.stringify(INITIAL_DATA.matches));renderAll();statusMsg('Se volvió a la base inicial con resultados cargados.');}}
 function cargarBaseInicial(){localStorage.removeItem(STORAGE_KEY);matches=JSON.parse(JSON.stringify(INITIAL_DATA.matches));renderAll();statusMsg('Base con resultados cargada nuevamente.');}
@@ -246,7 +309,7 @@ function renderProjected(data){
  rows = rows.concat(proyectarPorLlave('SF','Final / tercer puesto proyectado',103,2));
  let h='<thead><tr><th>Etapa</th><th>Partido</th><th>Equipo 1</th><th>Equipo 2</th><th>Referencia</th></tr></thead><tbody>';
  rows.forEach(r=>{
-  h+=`<tr><td>${r.etapa}</td><td>${r.partido}</td><td class="country ${r.home&&r.home.startsWith('Ganador')?'placeholder':''}">${r.home||''}</td><td class="country ${r.away&&r.away.startsWith('Ganador')?'placeholder':''}">${r.away||''}</td><td class="small">${r.ref}</td></tr>`;
+  h+=`<tr><td>${r.etapa}</td><td>${r.partido}</td><td class="country ${r.home&&r.home.startsWith('Ganador')?'placeholder':''}">${equipoConPuntos(r.home)||''}</td><td class="country ${r.away&&r.away.startsWith('Ganador')?'placeholder':''}">${equipoConPuntos(r.away)||''}</td><td class="small">${r.ref}</td></tr>`;
  });
  document.getElementById('projectedTable').innerHTML=h+'</tbody>';
 }
@@ -324,17 +387,11 @@ function normalizarESPN(j){
   const home=cs.find(c=>c.homeAway==='home')||cs[0]||{};
   const away=cs.find(c=>c.homeAway==='away')||cs[1]||{};
 
-  // ESPN puede traer el estado en ev.status o comp.status.
-  const statusObj=(ev.status || comp.status || {});
-  const status=(statusObj.type || statusObj || {});
+  // ESPN a veces trae el estado en ev.status y otras en comp.status.
+  // Este era el punto que impedía que se tomaran los marcadores como finales/en juego.
+  const status=(ev.status?.type || comp.status?.type || {});
   const completed=!!status.completed;
   const inProgress=status.state==='in';
-  const detail=status.shortDetail || status.detail || status.description || statusObj.shortDetail || statusObj.detail || statusObj.description || '';
-
-  // Corrección importante: aunque ESPN no marque completed, si ya trae score se toma el marcador.
-  const hs=scoreVal(home.score);
-  const as=scoreVal(away.score);
-  const traeMarcador=(hs!==null && as!==null);
 
   const alt=(comp.altGameNote||ev.season?.slug||ev.name||ev.shortName||'').toString();
   const fechaISO=fechaEcuadorISO(ev.date||comp.date||'');
@@ -346,9 +403,9 @@ function normalizarESPN(j){
    home: espnToSpanish(home.team?.displayName||home.team?.name||home.team?.location||''),
    away: espnToSpanish(away.team?.displayName||away.team?.name||away.team?.location||''),
    venue: comp.venue?.fullName||'', city: comp.venue?.address?.city||'',
-   homeScore: (completed || inProgress || traeMarcador) ? hs : null,
-   awayScore: (completed || inProgress || traeMarcador) ? as : null,
-   estadoWeb: detail
+   homeScore: (completed || inProgress) ? scoreVal(home.score) : null,
+   awayScore: (completed || inProgress) ? scoreVal(away.score) : null,
+   estadoWeb: status.shortDetail||status.detail||status.description||''
   });
  });
  return out.filter(m=>m.home||m.away);
@@ -413,15 +470,15 @@ async function consultarWeb(){
  try{
   let incoming=[];
 
-  // ESPN: primero consulta el rango completo con limit alto. Esto es más confiable que día por día.
   if(url.includes('site.api.espn.com')){
+   const start=new Date('2026-06-11T05:00:00Z');
    const today=new Date();
-   const endDate=new Date(Math.min(addDays(today,1).getTime(), new Date('2026-07-20T05:00:00Z').getTime()));
-   const startTxt='20260611';
-   const endTxt=ymd(endDate);
+   const hardEnd=new Date('2026-07-20T05:00:00Z');
+   const end=new Date(Math.min(addDays(today,1).getTime(), hardEnd.getTime()));
    const base=url.split('?')[0];
-   const rangeUrl=base+'?limit=950&dates='+startTxt+'-'+endTxt;
 
+   // Primero intento traer rango completo. ESPN acepta dates=YYYYMMDD-YYYYMMDD y limit alto.
+   const rangeUrl=base+'?limit=950&dates='+ymd(start)+'-'+ymd(end);
    try{
     const res=await fetch(rangeUrl,{cache:'no-store'});
     if(res.ok){
@@ -430,10 +487,9 @@ async function consultarWeb(){
     }
    }catch(_e){}
 
-   // Si el rango no devuelve nada, hace respaldo día por día.
+   // Si el rango no devuelve nada, intento día por día. Esto ayuda cuando ESPN limita el rango.
    if(!incoming.length){
-    const start=new Date('2026-06-11T05:00:00Z');
-    for(let d=start; d<=endDate; d=addDays(d,1)){
+    for(let d=start; d<=end; d=addDays(d,1)){
      const dayUrl=base+'?limit=200&dates='+ymd(d);
      try{
       const res=await fetch(dayUrl,{cache:'no-store'});
@@ -444,6 +500,7 @@ async function consultarWeb(){
     }
    }
 
+   // Último intento: endpoint simple de hoy.
    if(!incoming.length){
     const res=await fetch(url,{cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status);
     incoming=normalizarLista(await res.json());
@@ -453,7 +510,7 @@ async function consultarWeb(){
    incoming=normalizarLista(await res.json());
   }
 
-  // Aplica solamente partidos que traen marcador cuando existen; así no borra ni ensucia datos.
+  // Aplico primero los partidos que ya traen marcador. Si todos vienen sin marcador, igual los leo para actualizar equipos/estado.
   const conMarcador=incoming.filter(hasScore);
   matches=mergeMatches(matches,conMarcador.length?conMarcador:incoming);
   guardarLocal(false);
@@ -464,17 +521,10 @@ async function consultarWeb(){
   statusMsg('No pude consultar directo desde GitHub Pages. Posible CORS, internet bloqueado o formato diferente. Puedes pegar el JSON manualmente. Detalle: '+e.message,true);
  }
 }
-
 renderAll();
-  const r=mergeMatches.last||{};
-  statusMsg(`Web consultada. Partidos leídos: ${incoming.length}. Marcadores/equipos actualizados: ${r.updated||0}. Nuevos agregados: ${r.added||0}.`);
- }catch(e){
-  statusMsg('No pude consultar directo desde GitHub Pages. Posible CORS, internet bloqueado o formato diferente. Puedes pegar el JSON manualmente. Detalle: '+e.message,true);
- }
-}
-renderAll();
-setTimeout(()=>consultarWeb(), 800);
-setInterval(()=>consultarWeb(), 10*60*1000);
+// Consulta automática al abrir y cada 10 minutos, sin cambiar el diseño ni las tablas.
+setTimeout(()=>consultarWeb(),800);
+setInterval(()=>consultarWeb(),10*60*1000);
 </script>
 </body>
 </html>
