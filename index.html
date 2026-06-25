@@ -42,8 +42,8 @@ table{width:100%;border-collapse:collapse;font-size:13px;background:white} th,td
   <p class="small" id="status">Base cargada desde el respaldo con marcadores ya ingresados. Puedes editar marcadores; la tabla de países se actualiza sola.</p>
   <p class="small" id="resumenCarga"></p>
   <details><summary class="small">Configurar fuente web opcional</summary>
-   <p class="small">Por defecto intenta leer una API pública. Si usas otra fuente JSON, pega aquí la URL. La web solo funcionará si la fuente permite CORS.</p>
-   <input id="apiUrl" style="width:100%" value="https://worldcup26.ir/get/games">
+   <p class="small">Por defecto usa ESPN Scoreboard y consulta día por día desde el inicio del Mundial hasta hoy. Si usas otra fuente JSON, pega aquí la URL. La web solo funcionará si la fuente permite CORS.</p>
+   <input id="apiUrl" style="width:100%" value="https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard">
    <textarea id="pasteJson" placeholder="También puedes pegar aquí un JSON de partidos y presionar Importar JSON pegado"></textarea>
    <button class="secondary" onclick="importarPegado()">Importar JSON pegado</button>
   </details>
@@ -154,7 +154,7 @@ function renderGroups(){
   out+='</tbody></table></div>';
  }); document.getElementById('groupsBox').innerHTML=out;
 }
-function renderAll(){renderStageFilter();renderRanking();renderMatches();renderGroups();renderResumenCarga();renderProyeccion();}
+function renderAll(){actualizarPartidosProyectados();renderStageFilter();renderRanking();renderMatches();renderGroups();renderResumenCarga();renderProyeccion();}
 function guardarLocal(show=true){localStorage.setItem(STORAGE_KEY,JSON.stringify(matches)); if(show) statusMsg('Guardado en este dispositivo.');}
 function limpiarLocal(){if(confirm('¿Borrar respaldo local y volver a la base inicial con resultados?')){localStorage.removeItem(STORAGE_KEY);matches=JSON.parse(JSON.stringify(INITIAL_DATA.matches));renderAll();statusMsg('Se volvió a la base inicial con resultados cargados.');}}
 function cargarBaseInicial(){localStorage.removeItem(STORAGE_KEY);matches=JSON.parse(JSON.stringify(INITIAL_DATA.matches));renderAll();statusMsg('Base con resultados cargada nuevamente.');}
@@ -250,6 +250,44 @@ function renderProjected(data){
  });
  document.getElementById('projectedTable').innerHTML=h+'</tbody>';
 }
+
+function perdedorTexto(m){
+ if(!m) return '';
+ if(hasScore(m)){
+  const hs=Number(m.homeScore), as=Number(m.awayScore);
+  if(hs>as) return cleanTeam(m.away);
+  if(as>hs) return cleanTeam(m.home);
+  return 'Perdedor por penales M'+(m.number||'');
+ }
+ return 'Perdedor M'+(m.number||'');
+}
+function partidoPorNumero(n){return matches.find(m=>Number(m.number)===Number(n));}
+function escribirEquipos(num, home, away){
+ const m=partidoPorNumero(num); if(!m) return;
+ // Si el partido ya tiene marcador, no se cambia para no dañar resultados digitados.
+ if(hasScore(m)) return;
+ const nh=cleanTeam(home), na=cleanTeam(away);
+ if(m.home!==nh || m.away!==na){ m.home=nh; m.away=na; }
+}
+function actualizarPartidosProyectados(){
+ const data=getClasificadosActuales();
+ // 1) Dieciseisavos M73-M88: se llenan con clasificados actuales y mejores terceros.
+ proyectarR32(data).forEach(r=>{
+  const n=Number(String(r.partido).replace('M',''));
+  escribirEquipos(n,r.home,r.away);
+ });
+ // 2) Octavos M89-M96: ganadores de dieciseisavos, por pares.
+ for(let i=0;i<8;i++) escribirEquipos(89+i, ganadorTexto(partidoPorNumero(73+i*2)), ganadorTexto(partidoPorNumero(74+i*2)));
+ // 3) Cuartos M97-M100.
+ for(let i=0;i<4;i++) escribirEquipos(97+i, ganadorTexto(partidoPorNumero(89+i*2)), ganadorTexto(partidoPorNumero(90+i*2)));
+ // 4) Semifinales M101-M102.
+ escribirEquipos(101, ganadorTexto(partidoPorNumero(97)), ganadorTexto(partidoPorNumero(98)));
+ escribirEquipos(102, ganadorTexto(partidoPorNumero(99)), ganadorTexto(partidoPorNumero(100)));
+ // 5) Tercer puesto y Final.
+ escribirEquipos(103, perdedorTexto(partidoPorNumero(101)), perdedorTexto(partidoPorNumero(102)));
+ escribirEquipos(104, ganadorTexto(partidoPorNumero(101)), ganadorTexto(partidoPorNumero(102)));
+}
+
 function renderProyeccion(){
  const data=getClasificadosActuales();
  renderClasificados(data); renderThirds(data); renderProjected(data);
@@ -264,35 +302,145 @@ function renderResumenCarga(){
 }
 
 function normalizarLista(j){
+ // Soporta nuestro respaldo, worldcup26.ir y ESPN Scoreboard.
+ if(j && Array.isArray(j.events)) return normalizarESPN(j);
  const arr = Array.isArray(j)?j:(j.matches||j.games||j.data||j.results||[]);
  if(!Array.isArray(arr)) throw new Error('No encuentro lista de partidos');
  return arr.map((x,i)=>({
   id: x.id || x._id || x.match_id || ('W'+(x.number||i+1)), number: Number(x.number||x.matchNumber||x.matchday||i+1),
-  stage: x.stage || x.round || x.phase || x.type || 'GRUPOS', stageName: x.stageName || x.stage_name || x.round || x.phase || '', group: x.group || x.groupName || '',
-  date: x.date || x.matchDate || x.datetime || '', timeEcuador: x.timeEcuador || x.time || '', displayDate: x.displayDate || x.date || '',
+  stage: mapStage(x.stage || x.round || x.phase || x.type || 'GRUPOS'), stageName: x.stageName || x.stage_name || x.round || x.phase || '', group: x.group || x.groupName || '',
+  date: fechaISO(x.date || x.matchDate || x.datetime || ''), timeEcuador: x.timeEcuador || x.time || '', displayDate: x.displayDate || x.date || '',
   home: cleanTeam(x.home || x.homeTeam || x.team1 || x.local || x.home_team?.name || x.homeTeamName), away: cleanTeam(x.away || x.awayTeam || x.team2 || x.visitor || x.away_team?.name || x.awayTeamName),
   venue: x.venue || x.stadium || '', city: x.city || '',
   homeScore: scoreVal(x.homeScore ?? x.home_score ?? x.score1 ?? x.homeGoals ?? x.score?.home ?? x.result?.home),
   awayScore: scoreVal(x.awayScore ?? x.away_score ?? x.score2 ?? x.awayGoals ?? x.score?.away ?? x.result?.away)
  })).filter(m=>m.home||m.away);
 }
-function scoreVal(v){return (v===undefined||v===null||v==='')?null:Number(v);}
-function mergeMatches(base, incoming){
- const byId={}; base.forEach(m=>byId[m.id]=m);
- incoming.forEach(n=>{
-  let key=n.id; let m=byId[key] || base.find(x=>(x.number&&n.number&&x.number===n.number) || (cleanTeam(x.home)===cleanTeam(n.home)&&cleanTeam(x.away)===cleanTeam(n.away)&&x.date===n.date));
-  if(m){Object.assign(m, Object.fromEntries(Object.entries(n).filter(([k,v])=>v!==''&&v!==null&&v!==undefined)));}
-  else base.push(n);
- }); return base;
+function normalizarESPN(j){
+ const out=[];
+ (j.events||[]).forEach(ev=>{
+  const comp=(ev.competitions||[])[0]||{};
+  const cs=comp.competitors||[];
+  const home=cs.find(c=>c.homeAway==='home')||cs[0]||{};
+  const away=cs.find(c=>c.homeAway==='away')||cs[1]||{};
+
+  // ESPN a veces trae el estado en ev.status y otras en comp.status.
+  // Este era el punto que impedía que se tomaran los marcadores como finales/en juego.
+  const status=(ev.status?.type || comp.status?.type || {});
+  const completed=!!status.completed;
+  const inProgress=status.state==='in';
+
+  const alt=(comp.altGameNote||ev.season?.slug||ev.name||ev.shortName||'').toString();
+  const fechaISO=fechaEcuadorISO(ev.date||comp.date||'');
+
+  out.push({
+   id:'ESPN_'+(ev.id||comp.id), espnId: ev.id||comp.id, number:null,
+   stage: mapStage(alt), stageName: mapStageName(alt), group: extraerGrupo(alt),
+   date: fechaISO, timeEcuador: horaEcuador(ev.date||comp.date||''), displayDate: fechaDisplay(fechaISO),
+   home: espnToSpanish(home.team?.displayName||home.team?.name||home.team?.location||''),
+   away: espnToSpanish(away.team?.displayName||away.team?.name||away.team?.location||''),
+   venue: comp.venue?.fullName||'', city: comp.venue?.address?.city||'',
+   homeScore: (completed || inProgress) ? scoreVal(home.score) : null,
+   awayScore: (completed || inProgress) ? scoreVal(away.score) : null,
+   estadoWeb: status.shortDetail||status.detail||status.description||''
+  });
+ });
+ return out.filter(m=>m.home||m.away);
 }
+function scoreVal(v){return (v===undefined||v===null||v==='')?null:Number(v);}
+function fechaISO(v){return String(v||'').slice(0,10);}
+function fechaEcuadorISO(v){ if(!v) return ''; const d=new Date(v); if(isNaN(d)) return fechaISO(v); return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Guayaquil',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);}
+function horaEcuador(v){ if(!v) return ''; const d=new Date(v); if(isNaN(d)) return ''; return new Intl.DateTimeFormat('es-EC',{timeZone:'America/Guayaquil',hour:'2-digit',minute:'2-digit',hour12:false}).format(d);}
+function fechaDisplay(iso){ if(!iso) return ''; const [y,m,d]=iso.split('-'); return `${d}/${m}/${y}`; }
+function mapStage(s){
+ const t=String(s||'').toUpperCase();
+ if(t.includes('ROUND OF 32')||t.includes('DIECISEIS')) return 'R32';
+ if(t.includes('RD OF 16')||t.includes('ROUND OF 16')||t.includes('OCTAV')) return 'R16';
+ if(t.includes('QUARTER')||t.includes('CUART')) return 'QF';
+ if(t.includes('SEMI')) return 'SF';
+ if(t.includes('3RD')||t.includes('THIRD')||t.includes('TERCER')) return 'THIRD';
+ if(t.includes('FINAL')) return 'FINAL';
+ return 'GRUPOS';
+}
+function mapStageName(s){ const st=mapStage(s); return STAGE_LABELS[st]||st; }
+function extraerGrupo(s){ const m=String(s||'').match(/Group\s+([A-L])/i); return m?m[1]:''; }
+const ESPN_ALIASES={
+ 'UNITED STATES':'ESTADOS UNIDOS','USA':'ESTADOS UNIDOS','US':'ESTADOS UNIDOS','SOUTH AFRICA':'SUDÁFRICA','CZECHIA':'REP. CHECA','CZECH REPUBLIC':'REP. CHECA','KOREA REPUBLIC':'COREA del SUR','SOUTH KOREA':'COREA del SUR','BOSNIA-HERZEGOVINA':'BOSNIA y HERZEG.','BOSNIA AND HERZEGOVINA':'BOSNIA y HERZEG.','BOSNIA-HERZ':'BOSNIA y HERZEG.','QATAR':'CATAR','SWITZERLAND':'SUIZA','MOROCCO':'MARRUECOS','SCOTLAND':'ESCOCIA','NETHERLANDS':'PAÍSES BAJOS','IVORY COAST':'COSTA de MARFIL','CÔTE D’IVOIRE':'COSTA de MARFIL','COTE D IVOIRE':'COSTA de MARFIL','CURAÇAO':'CURAZAO','CURACAO':'CURAZAO','CAPE VERDE':'CABO VERDE','SAUDI ARABIA':'ARABIA SAUDITA','NEW ZEALAND':'NUEVA ZELANDA','CONGO DR':'REP. del CONGO','DR CONGO':'REP. del CONGO','DEMOCRATIC REPUBLIC OF THE CONGO':'REP. del CONGO','UZBEKISTAN':'UZBEKISTÁN','MEXICO':'MÉXICO','BRAZIL':'BRASIL','TUNISIA':'TÚNEZ','JAPAN':'JAPÓN','SWEDEN':'SUECIA','GERMANY':'ALEMANIA','ECUADOR':'ECUADOR','BELGIUM':'BÉLGICA','EGYPT':'EGIPTO','IRAN':'IRÁN','FRANCE':'FRANCIA','SENEGAL':'SENEGAL','IRAQ':'IRAK','NORWAY':'NORUEGA','ARGENTINA':'ARGENTINA','ALGERIA':'ARGELIA','AUSTRIA':'AUSTRIA','JORDAN':'JORDANIA','JORDANIA':'JORDANIA','PORTUGAL':'PORTUGAL','COLOMBIA':'COLOMBIA','ENGLAND':'INGLATERRA','CROATIA':'CROACIA','GHANA':'GHANA','PANAMA':'PANAMÁ','PARAGUAY':'PARAGUAY','AUSTRALIA':'AUSTRALIA','TURKEY':'TURQUÍA','TÜRKIYE':'TURQUÍA','SPAIN':'ESPAÑA','URUGUAY':'URUGUAY','HAITI':'HAITÍ'
+};
+function sinAcentos(s){return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'');}
+function espnToSpanish(name){ const raw=String(name||'').trim(); const key=raw.toUpperCase().replace(/\s+/g,' '); return ESPN_ALIASES[key]||raw.toUpperCase(); }
+function eqTeam(a,b){ return sinAcentos(a)===sinAcentos(b); }
+function samePair(x,n){ return (eqTeam(x.home,n.home)&&eqTeam(x.away,n.away)) || (eqTeam(x.home,n.away)&&eqTeam(x.away,n.home)); }
+function applyIncomingToMatch(m,n){
+ // Mantiene nuestros códigos M1-M104 y solo actualiza equipos/datos/marcadores reales.
+ if(n.home && n.away){
+  if(eqTeam(m.home,n.away)&&eqTeam(m.away,n.home)){
+   const hs=n.awayScore, as=n.homeScore;
+   if(hs!==null) m.homeScore=hs; if(as!==null) m.awayScore=as;
+  }else{
+   if(!m.home || m.home.startsWith('Ganador') || m.home==='Pendiente') m.home=n.home;
+   if(!m.away || m.away.startsWith('Ganador') || m.away==='Pendiente') m.away=n.away;
+   if(n.homeScore!==null) m.homeScore=n.homeScore;
+   if(n.awayScore!==null) m.awayScore=n.awayScore;
+  }
+ }
+ ['stage','stageName','group','date','timeEcuador','displayDate','venue','city','estadoWeb','espnId'].forEach(k=>{if(n[k]!==''&&n[k]!==null&&n[k]!==undefined) m[k]=n[k];});
+}
+function mergeMatches(base, incoming){
+ let updated=0, added=0;
+ incoming.forEach(n=>{
+  let m = null;
+  if(n.number) m=base.find(x=>Number(x.number)===Number(n.number));
+  if(!m && n.date) m=base.find(x=>x.date===n.date && samePair(x,n));
+  if(!m) m=base.find(x=>samePair(x,n));
+  if(m){ const before=JSON.stringify([m.home,m.away,m.homeScore,m.awayScore]); applyIncomingToMatch(m,n); if(JSON.stringify([m.home,m.away,m.homeScore,m.awayScore])!==before) updated++; }
+  else { base.push(n); added++; }
+ });
+ mergeMatches.last={updated,added,total:incoming.length};
+ return base;
+}
+function ymd(d){ return d.toISOString().slice(0,10).replace(/-/g,''); }
+function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
 async function consultarWeb(){
  const url=document.getElementById('apiUrl').value.trim(); if(!url) return;
- statusMsg('Consultando web...');
+ statusMsg('Consultando resultados web y actualizando marcadores...');
  try{
-  const res=await fetch(url,{cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status);
-  const j=await res.json(); const incoming=normalizarLista(j);
-  matches=mergeMatches(matches,incoming); guardarLocal(false); renderAll(); statusMsg('Resultados consultados e incorporados desde la web. Revisa que los nombres coincidan.');
- }catch(e){statusMsg('No pude consultar directo desde GitHub Pages. Posible CORS o formato diferente. Puedes pegar el JSON manualmente. Detalle: '+e.message,true);}
+  let incoming=[];
+
+  // ESPN: consulta día por día para traer partidos ya jugados y los que están en vivo.
+  if(url.includes('site.api.espn.com')){
+   const start=new Date('2026-06-11T05:00:00Z');
+   const today=new Date();
+   const end=new Date(Math.min(addDays(today,1).getTime(), new Date('2026-07-20T05:00:00Z').getTime()));
+   for(let d=start; d<=end; d=addDays(d,1)){
+    const sep=url.includes('?')?'&':'?';
+    const dayUrl=url+sep+'dates='+ymd(d);
+    try{
+     const res=await fetch(dayUrl,{cache:'no-store'});
+     if(!res.ok) continue;
+     const j=await res.json();
+     incoming=incoming.concat(normalizarLista(j));
+    }catch(_e){}
+   }
+   if(!incoming.length){
+    const res=await fetch(url,{cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status);
+    incoming=normalizarLista(await res.json());
+   }
+  }else{
+   const res=await fetch(url,{cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status);
+   incoming=normalizarLista(await res.json());
+  }
+
+  // Solo aplica partidos que traen marcador real, para no ensuciar la lista con datos vacíos.
+  const conMarcador=incoming.filter(hasScore);
+  matches=mergeMatches(matches,conMarcador.length?conMarcador:incoming);
+  guardarLocal(false);
+  renderAll();
+  const r=mergeMatches.last||{};
+  statusMsg(`Web consultada. Partidos leídos: ${incoming.length}. Marcadores/equipos actualizados: ${r.updated||0}. Nuevos agregados: ${r.added||0}.`);
+ }catch(e){
+  statusMsg('No pude consultar directo desde GitHub Pages. Posible CORS, internet bloqueado o formato diferente. Puedes pegar el JSON manualmente. Detalle: '+e.message,true);
+ }
 }
 renderAll();
 </script>
