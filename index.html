@@ -324,11 +324,17 @@ function normalizarESPN(j){
   const home=cs.find(c=>c.homeAway==='home')||cs[0]||{};
   const away=cs.find(c=>c.homeAway==='away')||cs[1]||{};
 
-  // ESPN a veces trae el estado en ev.status y otras en comp.status.
-  // Este era el punto que impedía que se tomaran los marcadores como finales/en juego.
-  const status=(ev.status?.type || comp.status?.type || {});
+  // ESPN puede traer el estado en ev.status o comp.status.
+  const statusObj=(ev.status || comp.status || {});
+  const status=(statusObj.type || statusObj || {});
   const completed=!!status.completed;
   const inProgress=status.state==='in';
+  const detail=status.shortDetail || status.detail || status.description || statusObj.shortDetail || statusObj.detail || statusObj.description || '';
+
+  // Corrección importante: aunque ESPN no marque completed, si ya trae score se toma el marcador.
+  const hs=scoreVal(home.score);
+  const as=scoreVal(away.score);
+  const traeMarcador=(hs!==null && as!==null);
 
   const alt=(comp.altGameNote||ev.season?.slug||ev.name||ev.shortName||'').toString();
   const fechaISO=fechaEcuadorISO(ev.date||comp.date||'');
@@ -340,9 +346,9 @@ function normalizarESPN(j){
    home: espnToSpanish(home.team?.displayName||home.team?.name||home.team?.location||''),
    away: espnToSpanish(away.team?.displayName||away.team?.name||away.team?.location||''),
    venue: comp.venue?.fullName||'', city: comp.venue?.address?.city||'',
-   homeScore: (completed || inProgress) ? scoreVal(home.score) : null,
-   awayScore: (completed || inProgress) ? scoreVal(away.score) : null,
-   estadoWeb: status.shortDetail||status.detail||status.description||''
+   homeScore: (completed || inProgress || traeMarcador) ? hs : null,
+   awayScore: (completed || inProgress || traeMarcador) ? as : null,
+   estadoWeb: detail
   });
  });
  return out.filter(m=>m.home||m.away);
@@ -407,21 +413,37 @@ async function consultarWeb(){
  try{
   let incoming=[];
 
-  // ESPN: consulta día por día para traer partidos ya jugados y los que están en vivo.
+  // ESPN: primero consulta el rango completo con limit alto. Esto es más confiable que día por día.
   if(url.includes('site.api.espn.com')){
-   const start=new Date('2026-06-11T05:00:00Z');
    const today=new Date();
-   const end=new Date(Math.min(addDays(today,1).getTime(), new Date('2026-07-20T05:00:00Z').getTime()));
-   for(let d=start; d<=end; d=addDays(d,1)){
-    const sep=url.includes('?')?'&':'?';
-    const dayUrl=url+sep+'dates='+ymd(d);
-    try{
-     const res=await fetch(dayUrl,{cache:'no-store'});
-     if(!res.ok) continue;
+   const endDate=new Date(Math.min(addDays(today,1).getTime(), new Date('2026-07-20T05:00:00Z').getTime()));
+   const startTxt='20260611';
+   const endTxt=ymd(endDate);
+   const base=url.split('?')[0];
+   const rangeUrl=base+'?limit=950&dates='+startTxt+'-'+endTxt;
+
+   try{
+    const res=await fetch(rangeUrl,{cache:'no-store'});
+    if(res.ok){
      const j=await res.json();
      incoming=incoming.concat(normalizarLista(j));
-    }catch(_e){}
+    }
+   }catch(_e){}
+
+   // Si el rango no devuelve nada, hace respaldo día por día.
+   if(!incoming.length){
+    const start=new Date('2026-06-11T05:00:00Z');
+    for(let d=start; d<=endDate; d=addDays(d,1)){
+     const dayUrl=base+'?limit=200&dates='+ymd(d);
+     try{
+      const res=await fetch(dayUrl,{cache:'no-store'});
+      if(!res.ok) continue;
+      const j=await res.json();
+      incoming=incoming.concat(normalizarLista(j));
+     }catch(_e){}
+    }
    }
+
    if(!incoming.length){
     const res=await fetch(url,{cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status);
     incoming=normalizarLista(await res.json());
@@ -431,7 +453,7 @@ async function consultarWeb(){
    incoming=normalizarLista(await res.json());
   }
 
-  // Solo aplica partidos que traen marcador real, para no ensuciar la lista con datos vacíos.
+  // Aplica solamente partidos que traen marcador cuando existen; así no borra ni ensucia datos.
   const conMarcador=incoming.filter(hasScore);
   matches=mergeMatches(matches,conMarcador.length?conMarcador:incoming);
   guardarLocal(false);
@@ -442,8 +464,17 @@ async function consultarWeb(){
   statusMsg('No pude consultar directo desde GitHub Pages. Posible CORS, internet bloqueado o formato diferente. Puedes pegar el JSON manualmente. Detalle: '+e.message,true);
  }
 }
+
 renderAll();
+  const r=mergeMatches.last||{};
+  statusMsg(`Web consultada. Partidos leídos: ${incoming.length}. Marcadores/equipos actualizados: ${r.updated||0}. Nuevos agregados: ${r.added||0}.`);
+ }catch(e){
+  statusMsg('No pude consultar directo desde GitHub Pages. Posible CORS, internet bloqueado o formato diferente. Puedes pegar el JSON manualmente. Detalle: '+e.message,true);
+ }
+}
+renderAll();
+setTimeout(()=>consultarWeb(), 800);
+setInterval(()=>consultarWeb(), 10*60*1000);
 </script>
 </body>
 </html>
-
