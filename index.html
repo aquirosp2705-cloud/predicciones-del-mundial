@@ -263,126 +263,38 @@ function renderResumenCarga(){
  if(el) el.innerHTML=`Marcadores cargados: <b>${jugados}</b> partidos · Pendientes: <b>${pendientes}</b> · Top actual: ${top}`;
 }
 
-
-// ===== CONSULTA WEB AUTOMÁTICA SIN CAMBIAR EL DISEÑO =====
-// Se agregó sobre tu archivo original: solo actualiza marcadores y recalcula.
-const TEAM_ALIASES = {
- 'MEXICO':'MÉXICO','MÉXICO':'MÉXICO','SOUTH AFRICA':'SUDÁFRICA','SUDAFRICA':'SUDÁFRICA','SUDÁFRICA':'SUDÁFRICA',
- 'KOREA REPUBLIC':'COREA del SUR','SOUTH KOREA':'COREA del SUR','KOREA':'COREA del SUR','COREA DEL SUR':'COREA del SUR','CZECH REPUBLIC':'REP. CHECA','CZECHIA':'REP. CHECA','REP CHECA':'REP. CHECA','REP. CHECA':'REP. CHECA',
- 'CANADA':'CANADÁ','CANADÁ':'CANADÁ','BOSNIA AND HERZEGOVINA':'BOSNIA y HERZEG.','BOSNIA HERZEGOVINA':'BOSNIA y HERZEG.','BOSNIA Y HERZEG':'BOSNIA y HERZEG.','BOSNIA Y HERZEG.':'BOSNIA y HERZEG.',
- 'QATAR':'CATAR','CATAR':'CATAR','SWITZERLAND':'SUIZA','SUIZA':'SUIZA','UNITED STATES':'ESTADOS UNIDOS','USA':'ESTADOS UNIDOS','UNITED STATES OF AMERICA':'ESTADOS UNIDOS','ESTADOS UNIDOS':'ESTADOS UNIDOS',
- 'PARAGUAY':'PARAGUAY','AUSTRALIA':'AUSTRALIA','TURKEY':'TURQUÍA','TURKIYE':'TURQUÍA','TURQUÍA':'TURQUÍA','BRAZIL':'BRASIL','BRASIL':'BRASIL','MOROCCO':'MARRUECOS','MARRUECOS':'MARRUECOS',
- 'HAITI':'HAITÍ','HAITÍ':'HAITÍ','SCOTLAND':'ESCOCIA','ESCOCIA':'ESCOCIA','GERMANY':'ALEMANIA','ALEMANIA':'ALEMANIA','CURACAO':'CURAZAO','CURAÇAO':'CURAZAO','CURAZAO':'CURAZAO',
- 'NETHERLANDS':'PAÍSES BAJOS','PAISES BAJOS':'PAÍSES BAJOS','PAÍSES BAJOS':'PAÍSES BAJOS','JAPAN':'JAPÓN','JAPÓN':'JAPÓN','JAPON':'JAPÓN','COTE D IVOIRE':'COSTA de MARFIL','IVORY COAST':'COSTA de MARFIL','COSTA DE MARFIL':'COSTA de MARFIL',
- 'ECUADOR':'ECUADOR','SWEDEN':'SUECIA','SUECIA':'SUECIA','TUNISIA':'TÚNEZ','TUNEZ':'TÚNEZ','TÚNEZ':'TÚNEZ','SPAIN':'ESPAÑA','ESPAÑA':'ESPAÑA','CAPE VERDE':'CABO VERDE','CABO VERDE':'CABO VERDE',
- 'BELGIUM':'BÉLGICA','BELGICA':'BÉLGICA','BÉLGICA':'BÉLGICA','EGYPT':'EGIPTO','EGIPTO':'EGIPTO','SAUDI ARABIA':'ARABIA SAUDITA','ARABIA SAUDITA':'ARABIA SAUDITA','URUGUAY':'URUGUAY',
- 'IRAN':'IRÁN','IRÁN':'IRÁN','NEW ZEALAND':'NUEVA ZELANDA','NUEVA ZELANDA':'NUEVA ZELANDA','FRANCE':'FRANCIA','FRANCIA':'FRANCIA','SENEGAL':'SENEGAL','IRAQ':'IRAK','IRAK':'IRAK',
- 'NORWAY':'NORUEGA','NORUEGA':'NORUEGA','ARGENTINA':'ARGENTINA','ALGERIA':'ARGELIA','ARGELIA':'ARGELIA','AUSTRIA':'AUSTRIA','JORDAN':'JORDANIA','JORDANIA':'JORDANIA',
- 'PORTUGAL':'PORTUGAL','CONGO DR':'REP. del CONGO','DR CONGO':'REP. del CONGO','DEMOCRATIC REPUBLIC OF THE CONGO':'REP. del CONGO','REP DEL CONGO':'REP. del CONGO','REP. DEL CONGO':'REP. del CONGO',
- 'ENGLAND':'INGLATERRA','INGLATERRA':'INGLATERRA','CROATIA':'CROACIA','CROACIA':'CROACIA','GHANA':'GHANA','PANAMA':'PANAMÁ','PANAMÁ':'PANAMÁ','UZBEKISTAN':'UZBEKISTÁN','UZBEKISTÁN':'UZBEKISTÁN','COLOMBIA':'COLOMBIA'
-};
-function keyName(t){
- return (t||'').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9]+/gi,' ').trim().toUpperCase();
-}
-function canonicalTeam(t){
- const k=keyName(t);
- if(!k) return '';
- if(TEAM_ALIASES[k]) return TEAM_ALIASES[k];
- const existing=[];
- matches.forEach(m=>{ if(m.home) existing.push(m.home); if(m.away) existing.push(m.away); });
- const found=existing.find(x=>keyName(x)===k);
- return found || cleanTeam(t);
-}
-function extraerListaPartidos(j){
- if(Array.isArray(j)) return j;
- if(!j || typeof j!=='object') return [];
- const keys=['matches','games','data','results','fixtures','response','items'];
- for(const k of keys){ if(Array.isArray(j[k])) return j[k]; }
- for(const k of keys){ if(j[k] && typeof j[k]==='object'){ const arr=extraerListaPartidos(j[k]); if(arr.length) return arr; } }
- return [];
-}
-function obtenerNombreEquipo(x, lado){
- const obj = x[lado] || x[lado+'Team'] || x[lado+'_team'] || x[lado+'_team'];
- if(typeof obj==='string') return obj;
- if(obj && typeof obj==='object') return obj.name || obj.country || obj.title || obj.shortName || obj.displayName || '';
- if(lado==='home') return x.team1 || x.local || x.homeTeamName || x.home_name || x.home_name_en || '';
- return x.team2 || x.visitor || x.awayTeamName || x.away_name || x.away_name_en || '';
+function normalizarLista(j){
+ const arr = Array.isArray(j)?j:(j.matches||j.games||j.data||j.results||[]);
+ if(!Array.isArray(arr)) throw new Error('No encuentro lista de partidos');
+ return arr.map((x,i)=>({
+  id: x.id || x._id || x.match_id || ('W'+(x.number||i+1)), number: Number(x.number||x.matchNumber||x.matchday||i+1),
+  stage: x.stage || x.round || x.phase || x.type || 'GRUPOS', stageName: x.stageName || x.stage_name || x.round || x.phase || '', group: x.group || x.groupName || '',
+  date: x.date || x.matchDate || x.datetime || '', timeEcuador: x.timeEcuador || x.time || '', displayDate: x.displayDate || x.date || '',
+  home: cleanTeam(x.home || x.homeTeam || x.team1 || x.local || x.home_team?.name || x.homeTeamName), away: cleanTeam(x.away || x.awayTeam || x.team2 || x.visitor || x.away_team?.name || x.awayTeamName),
+  venue: x.venue || x.stadium || '', city: x.city || '',
+  homeScore: scoreVal(x.homeScore ?? x.home_score ?? x.score1 ?? x.homeGoals ?? x.score?.home ?? x.result?.home),
+  awayScore: scoreVal(x.awayScore ?? x.away_score ?? x.score2 ?? x.awayGoals ?? x.score?.away ?? x.result?.away)
+ })).filter(m=>m.home||m.away);
 }
 function scoreVal(v){return (v===undefined||v===null||v==='')?null:Number(v);}
-function partidoTieneResultadoWeb(x, hs, as){
- const status = keyName(x.status || x.matchStatus || x.state || x.fixture_status || x.time || x.statusLong || x.statusShort);
- if(status.includes('FINISH') || status.includes('FULL TIME') || status==='FT' || status.includes('PLAY') || status.includes('LIVE') || status.includes('HALF')) return true;
- if(x.played===true || x.finished===true || x.isFinished===true || x.completed===true || x.in_progress===true || x.inProgress===true) return true;
- if(hs!==null && as!==null && (x.homeScore!==undefined || x.awayScore!==undefined || x.home_score!==undefined || x.away_score!==undefined || x.score1!==undefined || x.score2!==undefined || x.score!==undefined || x.result!==undefined)) return true;
- return false;
-}
-function normalizarLista(j){
- const arr = extraerListaPartidos(j);
- if(!Array.isArray(arr) || !arr.length) throw new Error('No encuentro lista de partidos');
- return arr.map((x,i)=>{
-  const hs=scoreVal(x.homeScore ?? x.home_score ?? x.score1 ?? x.homeGoals ?? x.goalsHome ?? x.home_goals ?? x.score?.home ?? x.score?.homeScore ?? x.result?.home ?? x.result?.homeScore);
-  const as=scoreVal(x.awayScore ?? x.away_score ?? x.score2 ?? x.awayGoals ?? x.goalsAway ?? x.away_goals ?? x.score?.away ?? x.score?.awayScore ?? x.result?.away ?? x.result?.awayScore);
-  const tiene=partidoTieneResultadoWeb(x,hs,as);
-  const n=Number(x.number||x.matchNumber||x.match_number||x.match_id||x.id||x.matchday||i+1);
-  return {
-   id: x.id || x._id || x.match_id || ('W'+(n||i+1)), number: n,
-   stage: x.stage || x.round || x.phase || x.type || 'GRUPOS', stageName: x.stageName || x.stage_name || x.round || x.phase || '', group: x.group || x.groupName || '',
-   date: x.date || x.matchDate || x.match_date || x.datetime || '', timeEcuador: x.timeEcuador || x.time || '', displayDate: x.displayDate || x.date || '',
-   home: canonicalTeam(obtenerNombreEquipo(x,'home')), away: canonicalTeam(obtenerNombreEquipo(x,'away')),
-   venue: x.venue || x.stadium || '', city: x.city || '',
-   homeScore: tiene ? hs : null,
-   awayScore: tiene ? as : null
-  };
- }).filter(m=>m.home||m.away);
-}
 function mergeMatches(base, incoming){
- let actualizados=0;
+ const byId={}; base.forEach(m=>byId[m.id]=m);
  incoming.forEach(n=>{
-  let m = null;
-  if(n.number) m = base.find(x=>Number(x.number)===Number(n.number));
-  if(!m && n.id) m = base.find(x=>String(x.id)===String(n.id));
-  if(!m) m = base.find(x=>keyName(x.home)===keyName(n.home) && keyName(x.away)===keyName(n.away) && (!n.date || !x.date || x.date===n.date));
-  if(!m) m = base.find(x=>keyName(x.home)===keyName(n.away) && keyName(x.away)===keyName(n.home) && (!n.date || !x.date || x.date===n.date));
-  if(m){
-   // Para respetar tu calendario, no reemplazo nombres, fechas, tablas ni diseño: solo marcador si viene un resultado real.
-   if(n.homeScore!==null && n.awayScore!==null){
-    if(keyName(m.home)===keyName(n.away) && keyName(m.away)===keyName(n.home)){
-     m.homeScore=n.awayScore; m.awayScore=n.homeScore;
-    }else{
-     m.homeScore=n.homeScore; m.awayScore=n.awayScore;
-    }
-    actualizados++;
-   }
-  }else if(n.home && n.away){
-   base.push(n);
-  }
- });
- return {matches:base, actualizados};
+  let key=n.id; let m=byId[key] || base.find(x=>(x.number&&n.number&&x.number===n.number) || (cleanTeam(x.home)===cleanTeam(n.home)&&cleanTeam(x.away)===cleanTeam(n.away)&&x.date===n.date));
+  if(m){Object.assign(m, Object.fromEntries(Object.entries(n).filter(([k,v])=>v!==''&&v!==null&&v!==undefined)));}
+  else base.push(n);
+ }); return base;
 }
-async function consultarWeb(auto=false){
+async function consultarWeb(){
  const url=document.getElementById('apiUrl').value.trim(); if(!url) return;
- statusMsg(auto?'Consultando web automáticamente...':'Consultando web...');
+ statusMsg('Consultando web...');
  try{
   const res=await fetch(url,{cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status);
   const j=await res.json(); const incoming=normalizarLista(j);
-  const merged=mergeMatches(matches,incoming);
-  matches=merged.matches; guardarLocal(false); renderAll();
-  const hora=new Date().toLocaleTimeString('es-EC',{hour:'2-digit',minute:'2-digit'});
-  statusMsg(`Resultados web incorporados. Partidos actualizados: ${merged.actualizados}. Última consulta: ${hora}.`);
- }catch(e){
-  statusMsg('No pude consultar directo desde GitHub Pages. Puede ser CORS, internet o formato distinto de la API. Detalle: '+e.message,true);
- }
-}
-function iniciarConsultaAutomatica(){
- // Consulta al abrir y luego cada 2 minutos. No cambia tu pantalla ni tus tablas.
- setTimeout(()=>consultarWeb(true),1200);
- setInterval(()=>consultarWeb(true),120000);
-}
-renderAll(); statusMsg('Resultados consultados e incorporados desde la web. Revisa que los nombres coincidan.');
+  matches=mergeMatches(matches,incoming); guardarLocal(false); renderAll(); statusMsg('Resultados consultados e incorporados desde la web. Revisa que los nombres coincidan.');
  }catch(e){statusMsg('No pude consultar directo desde GitHub Pages. Posible CORS o formato diferente. Puedes pegar el JSON manualmente. Detalle: '+e.message,true);}
 }
 renderAll();
-iniciarConsultaAutomatica();
 </script>
 </body>
 </html>
