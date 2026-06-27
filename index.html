@@ -291,23 +291,52 @@ function ganadorTexto(m){
  }
  return 'Ganador M'+(m.number||'');
 }
+function equipoPorGrupo(data, grupo, posicion){
+ const arr=data.groups[grupo]||[];
+ return arr[posicion-1] ? arr[posicion-1].team : `Pendiente ${posicion} ${grupo}`;
+}
+function terceroPorGrupo(data, grupo){
+ const arr=data.groups[grupo]||[];
+ return arr[2] ? arr[2] : null;
+}
+function elegirTerceroDisponible(data, gruposPermitidos, usados){
+ const candidatos=data.mejoresTerceros
+  .filter(t=>gruposPermitidos.includes(t.group) && !usados.has(t.team))
+  .sort((a,b)=> b.Pts-a.Pts || b.DG-a.DG || b.GF-a.GF || a.team.localeCompare(b.team));
+ const elegido=candidatos[0];
+ if(elegido){ usados.add(elegido.team); return elegido.team; }
+ return '3.º '+gruposPermitidos.join('/');
+}
 function proyectarR32(data){
- // Proyección simple: 24 directos + 8 mejores terceros, ordenados por rendimiento. No reemplaza el calendario oficial.
- const equipos=[...data.directos,...data.mejoresTerceros].sort((a,b)=> b.Pts-a.Pts || b.DG-a.DG || b.GF-a.GF || a.team.localeCompare(b.team));
- const out=[];
- for(let i=0;i<16;i++){
-  const h=equipos[i], a=equipos[31-i];
-  out.push({etapa:'Dieciseisavos proyectados',partido:'M'+(73+i),home:h?h.team:'Pendiente',away:a?a.team:'Pendiente',ref:'Por ranking actual de clasificados'});
- }
+ // Cruces oficiales publicados para la ronda de dieciseisavos del Mundial 2026.
+ // Los cruces con terceros usan la bolsa de grupos permitidos; se asigna el mejor tercero disponible de esa bolsa.
+ const usadosTerceros=new Set();
+ const out=[
+  {etapa:'Dieciseisavos',partido:'M73',home:equipoPorGrupo(data,'A',2),away:equipoPorGrupo(data,'B',2),ref:'2.º Grupo A vs 2.º Grupo B'},
+  {etapa:'Dieciseisavos',partido:'M74',home:equipoPorGrupo(data,'C',1),away:equipoPorGrupo(data,'F',2),ref:'1.º Grupo C vs 2.º Grupo F'},
+  {etapa:'Dieciseisavos',partido:'M75',home:equipoPorGrupo(data,'E',1),away:elegirTerceroDisponible(data,['A','B','C','D','F'],usadosTerceros),ref:'1.º Grupo E vs 3.º A/B/C/D/F'},
+  {etapa:'Dieciseisavos',partido:'M76',home:equipoPorGrupo(data,'F',1),away:equipoPorGrupo(data,'C',2),ref:'1.º Grupo F vs 2.º Grupo C'},
+  {etapa:'Dieciseisavos',partido:'M77',home:equipoPorGrupo(data,'E',2),away:equipoPorGrupo(data,'I',2),ref:'2.º Grupo E vs 2.º Grupo I'},
+  {etapa:'Dieciseisavos',partido:'M78',home:equipoPorGrupo(data,'I',1),away:elegirTerceroDisponible(data,['C','D','F','G','H'],usadosTerceros),ref:'1.º Grupo I vs 3.º C/D/F/G/H'},
+  {etapa:'Dieciseisavos',partido:'M79',home:equipoPorGrupo(data,'A',1),away:elegirTerceroDisponible(data,['C','E','F','H','I'],usadosTerceros),ref:'1.º Grupo A vs 3.º C/E/F/H/I'},
+  {etapa:'Dieciseisavos',partido:'M80',home:equipoPorGrupo(data,'L',1),away:elegirTerceroDisponible(data,['E','H','I','J','K'],usadosTerceros),ref:'1.º Grupo L vs 3.º E/H/I/J/K'},
+  {etapa:'Dieciseisavos',partido:'M81',home:equipoPorGrupo(data,'G',1),away:elegirTerceroDisponible(data,['A','E','H','I','J'],usadosTerceros),ref:'1.º Grupo G vs 3.º A/E/H/I/J'},
+  {etapa:'Dieciseisavos',partido:'M82',home:equipoPorGrupo(data,'D',1),away:elegirTerceroDisponible(data,['B','E','F','I','J'],usadosTerceros),ref:'1.º Grupo D vs 3.º B/E/F/I/J'},
+  {etapa:'Dieciseisavos',partido:'M83',home:equipoPorGrupo(data,'H',1),away:equipoPorGrupo(data,'J',2),ref:'1.º Grupo H vs 2.º Grupo J'},
+  {etapa:'Dieciseisavos',partido:'M84',home:equipoPorGrupo(data,'K',2),away:equipoPorGrupo(data,'L',2),ref:'2.º Grupo K vs 2.º Grupo L'},
+  {etapa:'Dieciseisavos',partido:'M85',home:equipoPorGrupo(data,'B',1),away:elegirTerceroDisponible(data,['E','F','G','I','J'],usadosTerceros),ref:'1.º Grupo B vs 3.º E/F/G/I/J'},
+  {etapa:'Dieciseisavos',partido:'M86',home:equipoPorGrupo(data,'D',2),away:equipoPorGrupo(data,'G',2),ref:'2.º Grupo D vs 2.º Grupo G'},
+  {etapa:'Dieciseisavos',partido:'M87',home:equipoPorGrupo(data,'J',1),away:equipoPorGrupo(data,'H',2),ref:'1.º Grupo J vs 2.º Grupo H'},
+  {etapa:'Dieciseisavos',partido:'M88',home:equipoPorGrupo(data,'K',1),away:elegirTerceroDisponible(data,['D','E','I','J','L'],usadosTerceros),ref:'1.º Grupo K vs 3.º D/E/I/J/L'}
+ ];
  return out;
 }
-function proyectarPorLlave(stage, nextStageName, firstMatch, count){
- const prev=matches.filter(m=>m.stage===stage).sort((a,b)=>(a.number||0)-(b.number||0));
+function proyectarPorLlave(stage, nextStageName, firstMatch, pairs){
  const out=[];
- for(let i=0;i<count;i++){
-  const m1=prev[i*2], m2=prev[i*2+1];
-  out.push({etapa:nextStageName,partido:'M'+(firstMatch+i),home:ganadorTexto(m1),away:ganadorTexto(m2),ref:`Ganadores de M${m1?m1.number:''} y M${m2?m2.number:''}`});
- }
+ pairs.forEach((par,i)=>{
+  const m1=partidoPorNumero(par[0]), m2=partidoPorNumero(par[1]);
+  out.push({etapa:nextStageName,partido:'M'+(firstMatch+i),home:ganadorTexto(m1),away:ganadorTexto(m2),ref:`Ganadores de M${par[0]} y M${par[1]}`});
+ });
  return out;
 }
 function renderProjected(data){
@@ -318,10 +347,10 @@ function renderProjected(data){
  const qfComplete=matches.filter(m=>m.stage==='QF').length && matches.filter(m=>m.stage==='QF').every(hasScore);
  const sfComplete=matches.filter(m=>m.stage==='SF').length && matches.filter(m=>m.stage==='SF').every(hasScore);
  rows = rows.concat(proyectarR32(data));
- rows = rows.concat(proyectarPorLlave('R32','Octavos proyectados',89,8));
- rows = rows.concat(proyectarPorLlave('R16','Cuartos proyectados',97,4));
- rows = rows.concat(proyectarPorLlave('QF','Semifinal proyectada',101,2));
- rows = rows.concat(proyectarPorLlave('SF','Final / tercer puesto proyectado',103,2));
+ rows = rows.concat(proyectarPorLlave('R32','Octavos proyectados',89,[[73,75],[74,77],[76,78],[79,80],[83,84],[81,82],[86,88],[85,87]]));
+ rows = rows.concat(proyectarPorLlave('R16','Cuartos proyectados',97,[[89,90],[93,94],[91,92],[95,96]]));
+ rows = rows.concat(proyectarPorLlave('QF','Semifinal proyectada',101,[[97,98],[99,100]]));
+ rows = rows.concat(proyectarPorLlave('SF','Final / tercer puesto proyectado',103,[[101,102],[101,102]]));
  let h='<thead><tr><th>Etapa</th><th>Partido</th><th>Equipo 1</th><th>Equipo 2</th><th>Referencia</th></tr></thead><tbody>';
  rows.forEach(r=>{
   h+=`<tr><td>${r.etapa}</td><td>${r.partido}</td><td class="country ${r.home&&r.home.startsWith('Ganador')?'placeholder':''}">${equipoConPuntos(r.home)||''}</td><td class="country ${r.away&&r.away.startsWith('Ganador')?'placeholder':''}">${equipoConPuntos(r.away)||''}</td><td class="small">${r.ref}</td></tr>`;
@@ -349,15 +378,19 @@ function escribirEquipos(num, home, away){
 }
 function actualizarPartidosProyectados(){
  const data=getClasificadosActuales();
- // 1) Dieciseisavos M73-M88: se llenan con clasificados actuales y mejores terceros.
+ // 1) Dieciseisavos M73-M88: cruces oficiales de la FIFA para 2026.
  proyectarR32(data).forEach(r=>{
   const n=Number(String(r.partido).replace('M',''));
   escribirEquipos(n,r.home,r.away);
  });
- // 2) Octavos M89-M96: ganadores de dieciseisavos, por pares.
- for(let i=0;i<8;i++) escribirEquipos(89+i, ganadorTexto(partidoPorNumero(73+i*2)), ganadorTexto(partidoPorNumero(74+i*2)));
+ // 2) Octavos M89-M96: según la llave oficial.
+ [[73,75],[74,77],[76,78],[79,80],[83,84],[81,82],[86,88],[85,87]].forEach((par,i)=>{
+  escribirEquipos(89+i, ganadorTexto(partidoPorNumero(par[0])), ganadorTexto(partidoPorNumero(par[1])));
+ });
  // 3) Cuartos M97-M100.
- for(let i=0;i<4;i++) escribirEquipos(97+i, ganadorTexto(partidoPorNumero(89+i*2)), ganadorTexto(partidoPorNumero(90+i*2)));
+ [[89,90],[93,94],[91,92],[95,96]].forEach((par,i)=>{
+  escribirEquipos(97+i, ganadorTexto(partidoPorNumero(par[0])), ganadorTexto(partidoPorNumero(par[1])));
+ });
  // 4) Semifinales M101-M102.
  escribirEquipos(101, ganadorTexto(partidoPorNumero(97)), ganadorTexto(partidoPorNumero(98)));
  escribirEquipos(102, ganadorTexto(partidoPorNumero(99)), ganadorTexto(partidoPorNumero(100)));
